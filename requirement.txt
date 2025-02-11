@@ -1,0 +1,15 @@
+streamlit
+requests
+PyMuPDF
+pandas
+pytesseract
+Pillow
+python-docx
+python-pptx
+openpyxl
+faiss-cpu
+numpy
+sentence-transformers
+pdf2image
+python-comtypes
+nltk
