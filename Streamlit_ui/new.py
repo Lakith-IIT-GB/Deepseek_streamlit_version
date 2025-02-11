@@ -1,7 +1,20 @@
+# --- Streamlit Configuration MUST BE FIRST ---
 import streamlit as st
+st.set_page_config(
+    page_title="Deepseek Chatbot",
+    page_icon="🤖",
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
+
+# --- Standard Library Imports ---
 import requests
 import json
 import os
+import logging
+import numpy as np
+
+# --- File Processing Imports ---
 from PyPDF2 import PdfReader
 import pandas as pd
 import pytesseract
@@ -9,18 +22,23 @@ from PIL import Image
 from docx import Document
 from pptx import Presentation
 from openpyxl import load_workbook
+from pdf2image import convert_from_path
+import fitz  # PyMuPDF
+
+# --- ML/NLP Imports ---
 import faiss
-import numpy as np
-import logging
 import nltk
 from sentence_transformers import SentenceTransformer
-from pdf2image import convert_from_path
-import comtypes.client
 
-# Configure logging and paths
+# --- Initial Configurations ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 nltk.download('punkt', quiet=True)
+
+# --- Platform-Specific Configuration ---
+if os.name == 'nt':  # Windows only
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+else:  # Linux/Streamlit Cloud
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
 # --- Core Functions ---
 def categorize_file(file_path):
@@ -32,6 +50,24 @@ def categorize_file(file_path):
         '.csv': 'csv', '.xlsx': 'xlsx', '.pptx': 'pptx',
         '.docx': 'docx', '.txt': 'text', '.md': 'text'
     }.get(extension, 'unknown')
+
+def process_office_file(file_path):
+    """Process PPTX/DOCX files for Linux compatibility"""
+    file_type = categorize_file(file_path)
+    content = []
+    
+    try:
+        if file_type == 'pptx':
+            prs = Presentation(file_path)
+            return "\n".join([shape.text for slide in prs.slides for shape in slide.shapes if shape.has_text_frame])
+        
+        if file_type == 'docx':
+            doc = Document(file_path)
+            return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+            
+    except Exception as e:
+        logging.error(f"Office processing error: {e}")
+    return "Could not extract content"
 
 def process_file(file_path):
     """Process different file types."""
@@ -59,13 +95,17 @@ def process_file(file_path):
         return None
 
 def process_pdf(file_path):
-    """Extract text from PDF."""
+    """Extract text from PDF using PyMuPDF."""
     text = ""
-    with fitz.open(file_path) as pdf:
-        for page in pdf:
-            text += page.get_text()
-    return text or " ".join([pytesseract.image_to_string(img) 
-                           for img in convert_from_path(file_path)])
+    try:
+        with fitz.open(file_path) as pdf:
+            text = "".join([page.get_text() for page in pdf])
+        if not text.strip():  # Fallback to OCR
+            images = convert_from_path(file_path)
+            text = " ".join([pytesseract.image_to_string(img) for img in images])
+    except Exception as e:
+        logging.error(f"PDF processing error: {e}")
+    return text
 
 def send_request(prompt, file_path=None):
     """Send request to Ollama API."""
@@ -88,20 +128,14 @@ def send_request(prompt, file_path=None):
         logging.error(f"API Error: {e}")
         return "Failed to get response from API"
 
-# --- Streamlit UI ---
-st.set_page_config(
-    page_title="Deepseek Chatbot",
-    page_icon="🤖",
-    layout="centered",
-    initial_sidebar_state="expanded"
-)
-
+# --- Streamlit UI Components ---
 st.title("Deepseek Chatbot 💬")
 st.caption("Powered by Ollama - Upload documents for contextual understanding")
 
 # Session state initialization
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
 if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = []
 
